@@ -35,6 +35,7 @@ final class EditorViewModel: ObservableObject {
     private var previewNeedsUpdate = false
     private var previewGeneration = 0
     private var undoStack: [EditorSnapshot] = []
+    private var recommendationBaseline: EditorSnapshot?
 
     var canExport: Bool {
         photo != nil && !isPreparing && !isExporting
@@ -42,6 +43,7 @@ final class EditorViewModel: ObservableObject {
 
     func selectProfile(_ profile: FilmProfile) {
         recordUndoSnapshot()
+        recommendationBaseline = nil
         withAnimation(.snappy(duration: 0.25)) {
             selectedProfile = profile
             settings = profile.factorySettings
@@ -72,11 +74,13 @@ final class EditorViewModel: ObservableObject {
         isExporting = false
         isRecommendationApplied = false
         undoStack.removeAll()
+        recommendationBaseline = nil
         canUndo = false
     }
 
     func resetSelectedProfile() {
         recordUndoSnapshot()
+        recommendationBaseline = nil
         withAnimation(.snappy(duration: 0.25)) {
             settings = selectedProfile.factorySettings
             intensity = selectedProfile == .neutral ? 1 : 0.82
@@ -87,6 +91,7 @@ final class EditorViewModel: ObservableObject {
 
     func resetAllAdjustments() {
         recordUndoSnapshot()
+        recommendationBaseline = nil
         withAnimation(.snappy(duration: 0.25)) {
             selectedProfile = .neutral
             settings = FilmProfile.neutral.factorySettings
@@ -97,7 +102,12 @@ final class EditorViewModel: ObservableObject {
     }
 
     func recommendLook() {
+        if isRecommendationApplied {
+            cancelRecommendationLook()
+            return
+        }
         guard let originalPreview, !isRecommending else { return }
+        recommendationBaseline = currentSnapshot
         recordUndoSnapshot()
         isRecommending = true
 
@@ -148,6 +158,7 @@ final class EditorViewModel: ObservableObject {
         }
 
         recordUndoSnapshot()
+        recommendationBaseline = nil
         withAnimation(.snappy(duration: 0.24)) {
             selectedProfile = preset.profile
             settings = preset.settings
@@ -163,6 +174,7 @@ final class EditorViewModel: ObservableObject {
         recordUndoSnapshot()
         crop = newCrop
         isRecommendationApplied = false
+        recommendationBaseline = nil
         schedulePreview()
     }
 
@@ -209,6 +221,7 @@ final class EditorViewModel: ObservableObject {
 
     func markManualAdjustment() {
         isRecommendationApplied = false
+        recommendationBaseline = nil
     }
 
     func recordUndoSnapshot() {
@@ -233,6 +246,7 @@ final class EditorViewModel: ObservableObject {
             isRecommendationApplied = snapshot.recommendationApplied
         }
         canUndo = !undoStack.isEmpty
+        recommendationBaseline = nil
         schedulePreview()
     }
 
@@ -334,6 +348,7 @@ final class EditorViewModel: ObservableObject {
             photo = asset
             exportOptions.keepLocation = asset.hasLocation
             undoStack.removeAll()
+            recommendationBaseline = nil
             canUndo = false
             isRecommendationApplied = false
             isPreparing = false
@@ -491,6 +506,21 @@ final class EditorViewModel: ObservableObject {
             mosaics: mosaicStrokes,
             recommendationApplied: isRecommendationApplied
         )
+    }
+
+    private func cancelRecommendationLook() {
+        guard let recommendationBaseline else {
+            isRecommendationApplied = false
+            return
+        }
+        withAnimation(.snappy(duration: 0.24)) {
+            selectedProfile = recommendationBaseline.profile
+            settings = recommendationBaseline.settings
+            intensity = recommendationBaseline.intensity
+            isRecommendationApplied = false
+        }
+        self.recommendationBaseline = nil
+        schedulePreview()
     }
 }
 

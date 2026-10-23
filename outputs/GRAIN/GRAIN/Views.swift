@@ -387,7 +387,7 @@ private struct EditorToolsPager: View {
                         Text("胶片滤镜")
                     }
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(page == .film ? GrainTheme.paper : GrainTheme.muted)
+                    .foregroundStyle(page == .film ? GrainTheme.accent : GrainTheme.muted)
                 }
                 .buttonStyle(.plain)
 
@@ -401,7 +401,7 @@ private struct EditorToolsPager: View {
                         Text("照片调节")
                     }
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(page == .adjust ? GrainTheme.paper : GrainTheme.muted)
+                    .foregroundStyle(page == .adjust ? GrainTheme.accent : GrainTheme.muted)
                 }
                 .buttonStyle(.plain)
 
@@ -462,20 +462,6 @@ private struct EditorToolsPager: View {
             .frame(height: 34)
             .contentShape(Rectangle())
             .gesture(pageSwipeGesture)
-            .overlay(alignment: .bottom) {
-                GeometryReader { proxy in
-                    Capsule()
-                        .fill(GrainTheme.accent)
-                        .frame(width: proxy.size.width * 0.25, height: 2)
-                        .offset(
-                            x: page == .film
-                                ? 18
-                                : proxy.size.width * 0.5
-                        )
-                        .animation(.snappy(duration: 0.24), value: page)
-                }
-                .frame(height: 2)
-            }
 
             ZStack {
                 if page == .film {
@@ -522,7 +508,7 @@ private struct PhotoEditorCanvas: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let imageSize = filledImageSize(in: proxy.size)
+            let imageSize = displayImageSize(in: proxy.size)
 
             ZStack {
                 Color.black
@@ -530,16 +516,14 @@ private struct PhotoEditorCanvas: View {
                 if showOriginal, let original = editor.originalPreview {
                     Image(decorative: original, scale: 1)
                         .resizable()
-                        .scaledToFill()
-                        .frame(width: proxy.size.width, height: proxy.size.height)
-                        .clipped()
+                        .frame(width: imageSize.width, height: imageSize.height)
+                        .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
                         .transition(.opacity)
                 } else if let edited = editor.editedPreview {
                     Image(decorative: edited, scale: 1)
                         .resizable()
-                        .scaledToFill()
-                        .frame(width: proxy.size.width, height: proxy.size.height)
-                        .clipped()
+                        .frame(width: imageSize.width, height: imageSize.height)
+                        .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
                         .transition(.opacity)
                 } else {
                     ProgressView()
@@ -656,7 +640,20 @@ private struct PhotoEditorCanvas: View {
         return CGFloat(photo.pixelWidth) / CGFloat(photo.pixelHeight)
     }
 
-    private func filledImageSize(in viewport: CGSize) -> CGSize {
+    private func displayImageSize(in viewport: CGSize) -> CGSize {
+        if imageAspect >= 1 {
+            if imageAspect > viewport.width / max(viewport.height, 1) {
+                return CGSize(
+                    width: viewport.width,
+                    height: viewport.width / max(imageAspect, 0.01)
+                )
+            }
+            return CGSize(
+                width: viewport.height * imageAspect,
+                height: viewport.height
+            )
+        }
+
         let viewportRatio = viewport.width / max(viewport.height, 1)
         if imageAspect > viewportRatio {
             return CGSize(width: viewport.height * imageAspect, height: viewport.height)
@@ -731,6 +728,7 @@ private struct FullscreenPhotoView: View {
     @State private var fullResolutionImage: CGImage?
     @State private var isLoadingFullResolution = false
     @State private var fullResolutionError: String?
+    @State private var didSwipeBack = false
 
     var body: some View {
         ZStack {
@@ -864,6 +862,7 @@ private struct FullscreenPhotoView: View {
         .task {
             await loadFullResolutionImage()
         }
+        .simultaneousGesture(fullscreenEdgeSwipeGesture)
     }
 
     private var magnificationGesture: some Gesture {
@@ -944,6 +943,23 @@ private struct FullscreenPhotoView: View {
             guard !Task.isCancelled else { return }
             fullResolutionError = error.localizedDescription
         }
+    }
+
+    private var fullscreenEdgeSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 8, coordinateSpace: .local)
+            .onChanged { value in
+                guard !didSwipeBack,
+                      value.startLocation.x <= 36,
+                      value.translation.width > 68,
+                      value.translation.width > abs(value.translation.height) * 1.35
+                else { return }
+                didSwipeBack = true
+                GrainHaptics.mediumImpact(enabled: true)
+                dismiss()
+            }
+            .onEnded { _ in
+                didSwipeBack = false
+            }
     }
 }
 

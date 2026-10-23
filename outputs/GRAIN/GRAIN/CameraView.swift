@@ -444,7 +444,6 @@ final class CameraController: ObservableObject {
             }
             session.addOutput(videoOutput)
             session.addOutput(photoOutput)
-            photoOutput.isHighResolutionCaptureEnabled = true
             photoOutput.isLivePhotoCaptureEnabled = photoOutput.isLivePhotoCaptureSupported
 
             let dimensions = device.activeFormat.supportedMaxPhotoDimensions
@@ -551,17 +550,12 @@ final class CameraController: ObservableObject {
     }
 
     private func captureProcessed(_ configuration: CameraCaptureConfiguration) {
-        let settings: AVCapturePhotoSettings
-        if configuration.format == .heif,
-           photoOutput.availablePhotoCodecTypes.contains(.hevc) {
-            settings = AVCapturePhotoSettings(
-                format: [AVVideoCodecKey: AVVideoCodecType.hevc]
-            )
-        } else {
-            settings = AVCapturePhotoSettings(
-                format: [AVVideoCodecKey: AVVideoCodecType.jpeg]
-            )
-        }
+        // Capture a single broadly supported JPEG stream, then encode the
+        // requested HEIF/PNG locally. This avoids hardware HEVC combinations
+        // that can fail when high-resolution photo output and Live Photo are active.
+        let settings = AVCapturePhotoSettings(
+            format: [AVVideoCodecKey: AVVideoCodecType.jpeg]
+        )
 
         settings.photoQualityPrioritization = .quality
         applyCommonSettings(settings, configuration: configuration)
@@ -610,7 +604,6 @@ final class CameraController: ObservableObject {
         } else if let fallbackMaximum {
             photoOutput.maxPhotoDimensions = fallbackMaximum
         }
-        photoOutput.isHighResolutionCaptureEnabled = configuration.resolution == .high48
     }
 
     private func startProcessor(
@@ -632,8 +625,11 @@ final class CameraController: ObservableObject {
                 }
             }
         }
-        activeProcessors[id] = processor
-        photoOutput.capturePhoto(with: settings, delegate: processor)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.activeProcessors[id] = processor
+            self.photoOutput.capturePhoto(with: settings, delegate: processor)
+        }
     }
 
     private func processCapturedOutput(
@@ -762,6 +758,7 @@ private final class CameraPhotoCaptureProcessor: NSObject, AVCapturePhotoCapture
     private var livePhotoURL: URL?
     private var captureError: Error?
     private var captureFinished = false
+    private var hasCompleted = false
 
     init(expectLivePhoto: Bool, completion: @escaping Completion) {
         self.expectLivePhoto = expectLivePhoto
@@ -810,19 +807,23 @@ private final class CameraPhotoCaptureProcessor: NSObject, AVCapturePhotoCapture
     }
 
     private func finishIfReady() {
-        guard captureFinished else { return }
+        guard captureFinished, !hasCompleted else { return }
         if let captureError {
+            hasCompleted = true
             completion(.failure(captureError))
             return
         }
         guard let photoData else {
+            hasCompleted = true
             completion(.failure(CameraError.missingPhotoData))
             return
         }
         if expectLivePhoto, livePhotoURL == nil {
+            hasCompleted = true
             completion(.failure(CameraError.livePhotoFailed))
             return
         }
+        hasCompleted = true
         completion(.success(CameraCapturedOutput(
             data: photoData,
             livePhotoURL: expectLivePhoto ? livePhotoURL : nil
