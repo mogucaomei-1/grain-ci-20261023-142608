@@ -20,11 +20,11 @@ struct GRAINApp: App {
 
     private func primeInitialPermissionsAndNetwork() async {
         async let cameraPermission: Bool = requestInitialCameraAccess()
-        var request = URLRequest(
-            url: URL(string: "https://captive.apple.com/hotspot-detect.html")!
+        let request = URLRequest(
+            url: URL(string: "https://captive.apple.com/hotspot-detect.html")!,
+            cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
+            timeoutInterval: 6
         )
-        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        request.timeoutInterval = 6
         if !didPrimeInitialNetworkAccess {
             didPrimeInitialNetworkAccess = true
             async let networkAccess: Void = primeNetworkAccess(request)
