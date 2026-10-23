@@ -47,9 +47,7 @@ struct RootView: View {
                             onInfo: { showInfoSheet = true },
                             onSettings: { showSettings = true },
                             histogramVisible: showHistogram,
-                            onToggleHistogram: {
-                                showHistogram.toggle()
-                            },
+                            onToggleHistogram: nil,
                             onExport: {
                                 editor.exportResult = nil
                                 showExportSheet = true
@@ -524,124 +522,124 @@ private struct PhotoEditorCanvas: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let imageHeight = min(proxy.size.height, proxy.size.width / imageAspect)
+            let imageSize = filledImageSize(in: proxy.size)
 
             ZStack {
                 Color.black
 
-                ZStack {
-                    if showOriginal, let original = editor.originalPreview {
-                        Image(decorative: original, scale: 1)
-                            .resizable()
-                            .scaledToFit()
-                            .transition(.opacity)
-                    } else if let edited = editor.editedPreview {
-                        Image(decorative: edited, scale: 1)
-                            .resizable()
-                            .scaledToFit()
-                            .transition(.opacity)
-                    } else {
-                        ProgressView()
-                            .tint(GrainTheme.paper)
+                if showOriginal, let original = editor.originalPreview {
+                    Image(decorative: original, scale: 1)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .clipped()
+                        .transition(.opacity)
+                } else if let edited = editor.editedPreview {
+                    Image(decorative: edited, scale: 1)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .clipped()
+                        .transition(.opacity)
+                } else {
+                    ProgressView()
+                        .tint(GrainTheme.paper)
+                }
+
+                TextOverlayInteractionView(
+                    overlays: editor.textOverlays,
+                    selectedID: selectedTextID,
+                    canvasSize: imageSize,
+                    hapticsEnabled: hapticsEnabled,
+                    onSelect: { selectedTextID = $0 },
+                    onEdit: onEditText,
+                    onDelete: { id in
+                        editor.deleteTextOverlay(id: id)
+                        selectedTextID = nil
+                    },
+                    onMoveStart: editor.recordUndoSnapshot,
+                    onMove: { id, normalizedCenter in
+                        editor.moveTextOverlay(
+                            id: id,
+                            x: normalizedCenter.x,
+                            y: normalizedCenter.y
+                        )
+                    },
+                    onTapEmpty: {
+                        selectedTextID = nil
+                        showFullscreen = true
                     }
+                )
+                .frame(width: imageSize.width, height: imageSize.height)
+                .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
 
-                    Color.clear
-                        .contentShape(Rectangle())
-
-                    TextOverlayInteractionView(
-                        overlays: editor.textOverlays,
-                        selectedID: selectedTextID,
-                        canvasSize: CGSize(width: proxy.size.width, height: imageHeight),
-                        hapticsEnabled: hapticsEnabled,
-                        onSelect: { selectedTextID = $0 },
-                        onEdit: onEditText,
-                        onDelete: { id in
-                            editor.deleteTextOverlay(id: id)
-                            selectedTextID = nil
-                        },
-                        onMoveStart: editor.recordUndoSnapshot,
-                        onMove: { id, normalizedCenter in
-                            editor.moveTextOverlay(
-                                id: id,
-                                x: normalizedCenter.x,
-                                y: normalizedCenter.y
-                            )
-                        },
-                        onTapEmpty: {
-                            selectedTextID = nil
-                            showFullscreen = true
-                        }
-                    )
-                    .frame(width: proxy.size.width, height: imageHeight)
-
-                    VStack {
-                        HStack(alignment: .top, spacing: 12) {
-                            Label(editor.photo?.sourceKindLabel ?? "RAW", systemImage: "circle.fill")
-                                .labelStyle(.titleAndIcon)
-                                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                                .tracking(0.8)
-                                .foregroundStyle(GrainTheme.paper)
-                                .padding(.horizontal, 9)
-                                .frame(height: 24)
-                                .background(.black.opacity(0.52), in: Capsule())
-
-                            Spacer()
-
-                            if showHistogram, let histogram = editor.histogram {
-                                HistogramView(data: histogram)
-                                    .frame(width: 82, height: 46)
-                                    .offset(x: 5, y: -6)
-                            }
-
-                            if editor.isPreparing {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .tint(GrainTheme.paper)
-                                    .padding(8)
-                                    .background(.black.opacity(0.46), in: Circle())
-                            }
-                        }
+                VStack {
+                    HStack(alignment: .top, spacing: 12) {
+                        Label(editor.photo?.sourceKindLabel ?? "RAW", systemImage: "circle.fill")
+                            .labelStyle(.titleAndIcon)
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .tracking(0.8)
+                            .foregroundStyle(GrainTheme.paper)
+                            .padding(.horizontal, 9)
+                            .frame(height: 24)
+                            .background(.black.opacity(0.52), in: Capsule())
 
                         Spacer()
 
-                        HStack(alignment: .bottom) {
-                            Text(showOriginal ? "原片" : editor.selectedProfile.name)
-                                .font(.system(size: 9, weight: .semibold, design: .rounded))
-                                .foregroundStyle(GrainTheme.paper)
-                                .padding(.horizontal, 10)
-                                .frame(height: 27)
-                                .background(.black.opacity(0.48), in: Capsule())
+                        if showHistogram, let histogram = editor.histogram {
+                            HistogramView(data: histogram)
+                                .frame(width: 82, height: 46)
+                                .offset(x: 5, y: -6)
+                        }
 
-                            Spacer()
-
-                            Text("轻点全屏 · 按住看原片")
-                                .font(.system(size: 9, weight: .semibold, design: .rounded))
-                                .foregroundStyle(GrainTheme.paper)
-                                .padding(.horizontal, 11)
-                                .frame(height: 29)
-                                .background(.black.opacity(0.52), in: Capsule())
-                                .contentShape(Capsule())
-                                .gesture(
-                                    DragGesture(minimumDistance: 0)
-                                        .onChanged { _ in
-                                            withAnimation(.easeOut(duration: 0.12)) {
-                                                showOriginal = true
-                                            }
-                                        }
-                                        .onEnded { _ in
-                                            withAnimation(.easeOut(duration: 0.16)) {
-                                                showOriginal = false
-                                            }
-                                        }
-                                )
+                        if editor.isPreparing {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(GrainTheme.paper)
+                                .padding(8)
+                                .background(.black.opacity(0.46), in: Circle())
                         }
                     }
-                    .padding(13)
+
+                    Spacer()
+
+                    HStack(alignment: .bottom) {
+                        Text(showOriginal ? "原片" : editor.selectedProfile.name)
+                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .foregroundStyle(GrainTheme.paper)
+                            .padding(.horizontal, 10)
+                            .frame(height: 27)
+                            .background(.black.opacity(0.48), in: Capsule())
+
+                        Spacer()
+
+                        Text("轻点全屏 · 按住看原片")
+                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .foregroundStyle(GrainTheme.paper)
+                            .padding(.horizontal, 11)
+                            .frame(height: 29)
+                            .background(.black.opacity(0.52), in: Capsule())
+                            .contentShape(Capsule())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { _ in
+                                        withAnimation(.easeOut(duration: 0.12)) {
+                                            showOriginal = true
+                                        }
+                                    }
+                                    .onEnded { _ in
+                                        withAnimation(.easeOut(duration: 0.16)) {
+                                            showOriginal = false
+                                        }
+                                    }
+                            )
+                    }
                 }
-                .coordinateSpace(name: "photo-editor-canvas")
-                .frame(width: proxy.size.width, height: imageHeight)
+                .padding(13)
+                .frame(width: proxy.size.width, height: proxy.size.height)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
@@ -656,6 +654,14 @@ private struct PhotoEditorCanvas: View {
             return 3 / 2
         }
         return CGFloat(photo.pixelWidth) / CGFloat(photo.pixelHeight)
+    }
+
+    private func filledImageSize(in viewport: CGSize) -> CGSize {
+        let viewportRatio = viewport.width / max(viewport.height, 1)
+        if imageAspect > viewportRatio {
+            return CGSize(width: viewport.height * imageAspect, height: viewport.height)
+        }
+        return CGSize(width: viewport.width, height: viewport.width / max(imageAspect, 0.01))
     }
 }
 

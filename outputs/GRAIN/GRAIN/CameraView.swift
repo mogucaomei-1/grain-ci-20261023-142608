@@ -387,7 +387,9 @@ final class CameraController: ObservableObject {
             }
             guard generation == captureGeneration else { return }
             countdown = nil
-            performCapture(configuration)
+            sessionQueue.async { [weak self] in
+                self?.performCapture(configuration)
+            }
         }
     }
 
@@ -837,57 +839,59 @@ private enum CameraImageProcessor {
         output: CameraCapturedOutput,
         configuration: CameraCaptureConfiguration
     ) throws -> CameraPreparedOutput {
-        if configuration.format == .raw {
-            return CameraPreparedOutput(
+        try autoreleasepool {
+            if configuration.format == .raw {
+                return CameraPreparedOutput(
+                    data: output.data,
+                    fileName: "GRAIN-\(timestamp()).dng",
+                    uniformTypeIdentifier: "com.adobe.digital-negative",
+                    livePhotoURL: nil
+                )
+            }
+
+            guard let source = CIImage(
                 data: output.data,
-                fileName: "GRAIN-\(timestamp()).dng",
-                uniformTypeIdentifier: "com.adobe.digital-negative",
-                livePhotoURL: nil
+                options: [.applyOrientationProperty: true]
+            ) else {
+                throw CameraError.imageDecodeFailed
+            }
+
+            let cropped = crop(source, to: configuration.aspect.ratio)
+            let scaled = resize(cropped, targetPixels: configuration.resolution.targetPixels)
+            let extent = scaled.extent.integral
+            guard let image = context.createCGImage(
+                scaled,
+                from: extent,
+                format: .RGBA8,
+                colorSpace: CGColorSpace(name: CGColorSpace.displayP3)
+            ) else {
+                throw CameraError.imageEncodeFailed
+            }
+
+            let format: CameraCaptureFormat = configuration.format == .png ? .png : .heif
+            let type = format == .png ? UTType.png : UTType.heic
+            let data = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(
+                data,
+                type.identifier as CFString,
+                1,
+                nil
+            ) else {
+                throw CameraError.imageEncodeFailed
+            }
+            CGImageDestinationAddImage(destination, image, nil)
+            guard CGImageDestinationFinalize(destination) else {
+                throw CameraError.imageEncodeFailed
+            }
+
+            let fileExtension = format == .png ? "png" : "heif"
+            return CameraPreparedOutput(
+                data: data as Data,
+                fileName: "GRAIN-\(timestamp()).\(fileExtension)",
+                uniformTypeIdentifier: type.identifier,
+                livePhotoURL: output.livePhotoURL
             )
         }
-
-        guard let source = CIImage(
-            data: output.data,
-            options: [.applyOrientationProperty: true]
-        ) else {
-            throw CameraError.imageDecodeFailed
-        }
-
-        let cropped = crop(source, to: configuration.aspect.ratio)
-        let scaled = resize(cropped, targetPixels: configuration.resolution.targetPixels)
-        let extent = scaled.extent.integral
-        guard let image = context.createCGImage(
-            scaled,
-            from: extent,
-            format: .RGBA8,
-            colorSpace: CGColorSpace(name: CGColorSpace.displayP3)
-        ) else {
-            throw CameraError.imageEncodeFailed
-        }
-
-        let format: CameraCaptureFormat = configuration.format == .png ? .png : .heif
-        let type = format == .png ? UTType.png : UTType.heic
-        let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(
-            data,
-            type.identifier as CFString,
-            1,
-            nil
-        ) else {
-            throw CameraError.imageEncodeFailed
-        }
-        CGImageDestinationAddImage(destination, image, nil)
-        guard CGImageDestinationFinalize(destination) else {
-            throw CameraError.imageEncodeFailed
-        }
-
-        let fileExtension = format == .png ? "png" : "heif"
-        return CameraPreparedOutput(
-            data: data as Data,
-            fileName: "GRAIN-\(timestamp()).\(fileExtension)",
-            uniformTypeIdentifier: type.identifier,
-            livePhotoURL: output.livePhotoURL
-        )
     }
 
     private static func crop(_ image: CIImage, to ratio: Double) -> CIImage {
@@ -1080,28 +1084,86 @@ final class CameraPreviewUIView: UIView {
         latestFocusLayer?.removeFromSuperlayer()
 
         let reticle = CALayer()
-        let size: CGFloat = locked ? 62 : 54
+        let size: CGFloat = locked ? 80 : 72
         reticle.frame = CGRect(
             x: point.x - size / 2,
             y: point.y - size / 2,
             width: size,
             height: size
         )
-        reticle.borderColor = UIColor(
-            red: 0.851,
-            green: 0.467,
-            blue: 0.306,
-            alpha: 1
-        ).cgColor
-        reticle.borderWidth = 1.4
-        reticle.cornerRadius = 4
-        reticle.backgroundColor = UIColor.clear.cgColor
+        reticle.backgroundColor = UIColor.black.withAlphaComponent(0.08).cgColor
+        reticle.cornerRadius = 5
+
+        let bracketPath = CGMutablePath()
+        let inset: CGFloat = 5
+        let arm: CGFloat = 17
+        bracketPath.move(to: CGPoint(x: inset, y: inset + arm))
+        bracketPath.addLine(to: CGPoint(x: inset, y: inset))
+        bracketPath.addLine(to: CGPoint(x: inset + arm, y: inset))
+        bracketPath.move(to: CGPoint(x: size - inset - arm, y: inset))
+        bracketPath.addLine(to: CGPoint(x: size - inset, y: inset))
+        bracketPath.addLine(to: CGPoint(x: size - inset, y: inset + arm))
+        bracketPath.move(to: CGPoint(x: size - inset, y: size - inset - arm))
+        bracketPath.addLine(to: CGPoint(x: size - inset, y: size - inset))
+        bracketPath.addLine(to: CGPoint(x: size - inset - arm, y: size - inset))
+        bracketPath.move(to: CGPoint(x: inset + arm, y: size - inset))
+        bracketPath.addLine(to: CGPoint(x: inset, y: size - inset))
+        bracketPath.addLine(to: CGPoint(x: inset, y: size - inset - arm))
+
+        for (color, width) in [
+            (UIColor.black.withAlphaComponent(0.72), CGFloat(4.2)),
+            (UIColor(red: 1.0, green: 0.63, blue: 0.20, alpha: 1), CGFloat(2.0))
+        ] {
+            let bracket = CAShapeLayer()
+            bracket.path = bracketPath
+            bracket.strokeColor = color.cgColor
+            bracket.fillColor = UIColor.clear.cgColor
+            bracket.lineWidth = width
+            bracket.lineCap = .round
+            bracket.lineJoin = .round
+            reticle.addSublayer(bracket)
+        }
+
+        let label = CATextLayer()
+        label.string = locked ? "AE/AF 已锁定" : "AF"
+        label.font = UIFont.systemFont(ofSize: 8, weight: .bold)
+        label.fontSize = 8
+        label.alignmentMode = .center
+        label.foregroundColor = UIColor.white.cgColor
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.52).cgColor
+        label.cornerRadius = 4
+        label.contentsScale = UIScreen.main.scale
+        label.frame = CGRect(
+            x: -4,
+            y: size + 3,
+            width: size + 8,
+            height: 15
+        )
+        reticle.addSublayer(label)
+
+        let inner = CALayer()
+        let crossSize: CGFloat = 8
+        inner.frame = CGRect(
+            x: (size - crossSize) / 2,
+            y: (size - crossSize) / 2,
+            width: crossSize,
+            height: crossSize
+        )
+        inner.borderColor = UIColor.white.withAlphaComponent(0.9).cgColor
+        inner.borderWidth = 0.7
+        inner.cornerRadius = crossSize / 2
+        reticle.addSublayer(inner)
 
         let scale = CABasicAnimation(keyPath: "transform.scale")
-        scale.fromValue = 1.35
+        scale.fromValue = 1.28
         scale.toValue = 1
-        scale.duration = 0.18
+        scale.duration = 0.22
         reticle.add(scale, forKey: "focus-in")
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0.25
+        fade.toValue = 1
+        fade.duration = 0.16
+        reticle.add(fade, forKey: "focus-fade")
         filteredImageView.layer.addSublayer(reticle)
         latestFocusLayer = reticle
 
@@ -1137,10 +1199,11 @@ private final class CameraVideoPreviewDelegate: NSObject, AVCaptureVideoDataOutp
 
         let oriented = CIImage(cvPixelBuffer: pixelBuffer).oriented(.right)
         let extent = oriented.extent
-        let scale = min(1, 820 / max(max(extent.width, extent.height), 1))
-        let scaled = oriented.transformed(
-            by: CGAffineTransform(scaleX: scale, y: scale)
-        )
+        let scale = min(1, 1560 / max(max(extent.width, extent.height), 1))
+        let scaled = oriented.applyingFilter("CILanczosScaleTransform", parameters: [
+            kCIInputScaleKey: scale,
+            kCIInputAspectRatioKey: 1
+        ])
         let look = lookStore.read()
         let filtered = RawImageProcessor.renderLivePreview(
             source: scaled,
@@ -1184,21 +1247,25 @@ struct CameraView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            CameraPreviewView(
-                session: camera.session,
-                onFocus: { devicePoint, lock in
-                    camera.focus(at: devicePoint, lock: lock)
-                    GrainHaptics.lightImpact(enabled: true)
-                },
-                onViewCreated: camera.attachPreview
-            )
-                .ignoresSafeArea()
-                .simultaneousGesture(pinchToZoomGesture)
-            framingOverlay
-
             VStack(spacing: 0) {
                 topBar
-                Spacer()
+
+                ZStack {
+                    CameraPreviewView(
+                        session: camera.session,
+                        onFocus: { devicePoint, lock in
+                            camera.focus(at: devicePoint, lock: lock)
+                            GrainHaptics.mediumImpact(enabled: true)
+                        },
+                        onViewCreated: camera.attachPreview
+                    )
+                    .simultaneousGesture(pinchToZoomGesture)
+                    framingOverlay
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black)
+                .clipped()
+
                 cameraControls
             }
 
@@ -1574,11 +1641,11 @@ struct CameraView: View {
     private var framingOverlay: some View {
         GeometryReader { proxy in
             let available = CGSize(
-                width: proxy.size.width - 30,
-                height: proxy.size.height - 300
+                width: proxy.size.width - 18,
+                height: proxy.size.height - 18
             )
-            let rect = fittedFrame(for: aspect.ratio, in: available)
-                .offsetBy(dx: 15, dy: 92)
+            let fitted = fittedFrame(for: aspect.ratio, in: available)
+            let rect = fitted.offsetBy(dx: 9, dy: 9)
 
             ZStack {
                 if showGrid {

@@ -223,10 +223,11 @@ private final class TextOverlayItemUIView: UIView {
         addSubview(deleteButton)
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
-        addGestureRecognizer(tap)
-
         let pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
         pan.maximumNumberOfTouches = 1
+        pan.cancelsTouchesInView = true
+        tap.require(toFail: pan)
+        addGestureRecognizer(tap)
         addGestureRecognizer(pan)
     }
 
